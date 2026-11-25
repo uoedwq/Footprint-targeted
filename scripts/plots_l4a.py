@@ -25,6 +25,11 @@ from scipy.optimize import curve_fit
 from scipy.spatial import cKDTree
 from scipy.stats import mannwhitneyu, spearmanr
 
+import os
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common import agb, gamma_fit
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -70,7 +75,7 @@ def with_ci(y, yhat):
 # ------------------------------------------------------------------ part 1: plots
 plots = pd.read_csv(STUDY / "field_plots.csv")
 v3 = pd.read_csv(STUDY / "plots_v3.csv", dtype={"v2_shot_number": str})
-keep = ["plot", "v2_shot_number", "v3_plot_dist_m", "v3_delta_time", "v2_agbd_l4a", "v2_l4_quality", "v3_l4_agbd",
+keep = ["plot", "v2_shot_number", "v3_rh98", "v3_rh80", "v3_sensitivity_a2", "v3_plot_dist_m", "v3_delta_time", "v2_agbd_l4a", "v2_l4_quality", "v3_l4_agbd",
         "v3_l4_l4a_quality_flag_rel3", "v3_l4_predict_stratum"]
 df = plots[["plot", "region", "calibration", "agb_mgha", "v1_rh98", "v1_rh80", "v1_sensitivity", "v1_solar_elevation",
             "v1_beam"]].merge(v3[keep], on="plot", how="left")
@@ -89,6 +94,7 @@ for region in ["NE", "SW"]:
     x, y = cal[f"v1_{m}"].to_numpy(float), cal.agb_mgha.to_numpy(float)
     cal["loo"] = [power(x[i], *fit_power(np.delete(x, i), np.delete(y, i))) for i in range(len(x))]
     df.loc[cal.index, "loo"] = cal.loo
+    df.loc[cal.index, "loo_gamma"] = [agb(gamma_fit(np.delete(x, i), np.delete(y, i)), x[i:i + 1])[0] for i in range(len(x))]
     sets = {"all calibration plots": cal,
             "plots with an L4A V3 value": cal[cal.v3_l4_agbd.notna()],
             "plots passing the L4A V3 flag": cal[cal.v3_l4_l4a_quality_flag_rel3.eq(1)]}
@@ -166,16 +172,20 @@ def pair_stats(d, region, filt):
 
 
 pairs, counts = [], []
-for region in ["NE", "SW"]:
+REUSE = os.environ.get("REUSE_PAIRS") == "1" and (STUDY / "pair_correlation.csv").exists()     # the pairs do not depend on the plots
+for region in [] if REUSE else ["NE", "SW"]:
     d = load(region)
     for filt, sub in (("conventional", d[d.conventional]), ("relaxed", d)):
         counts.append(dict(region=region, filter=filt, forest_leafon_shots=len(sub)))
         pairs += pair_stats(sub.reset_index(drop=True), region, filt)
         print(region, filt, f"{len(sub):,} shots", flush=True)
     del d
-pairs = pd.DataFrame(pairs)
-pairs.to_csv(STUDY / "pair_correlation.csv", index=False)
-pd.DataFrame(counts).to_csv(STUDY / "filter_counts.csv", index=False)
+if REUSE:
+    pairs = pd.read_csv(STUDY / "pair_correlation.csv")
+else:
+    pairs = pd.DataFrame(pairs)
+    pairs.to_csv(STUDY / "pair_correlation.csv", index=False)
+    pd.DataFrame(counts).to_csv(STUDY / "filter_counts.csv", index=False)
 print(pairs[pairs.span.eq("all")].round(3).to_string(index=False), flush=True)
 
 # attenuation at each calibration plot's V3 offset, relative to the 0-5 m bin

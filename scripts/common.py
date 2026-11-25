@@ -42,7 +42,7 @@ def calibration_plots(region):
 
 
 def calibration_sets(region, n_boot=200, seed=1):
-    """Main parameters, plot-bootstrap parameters and the five allometries (all Gamma GLM on the RH metric of the region)."""
+    """Main parameters, plot-bootstrap parameters and the five allometries (all Gamma GLM on the RH metric of the region; RH of the targeted V1 shot)."""
     cal = calibration_plots(region)
     m = METRIC[region]
     x, y = cal[f"v1_{m}"].to_numpy(float), cal.agb_mgha.to_numpy(float)
@@ -195,3 +195,30 @@ def features_at(region, x, y):
             py = np.clip(((t.y0 - y[idx]) // PX).astype(int), 0, TILE - 1)
             out[idx] = np.stack([f[c][py, px] for c in cols]).T
     return pd.DataFrame(out, columns=cols)
+
+
+# ------------------------------------------------------------------ GEDI L4B Version 2.1 (mission weeks 19-223, 2019-04-18 to 2023-03-16; doi 10.3334/ORNLDAAC/2299)
+L4B_FILE = ROOT / "0_data/9_GEDI_L4B/GEDI_L4B_Gridded_Biomass_V2_1_2299/data/GEDI04_B_MW019MW223_02_002_02_R01000M_MU.tif"
+
+
+def l4b_v21(x, y, crs):
+    """AGBD (Mg/ha) of the 1 km L4B cell that contains each point (x, y in crs); NaN where L4B has no estimate."""
+    import rasterio
+    from pyproj import Transformer
+    shape = np.shape(x)
+    X, Y = Transformer.from_crs(crs, "EPSG:6933", always_xy=True).transform(np.asarray(x, float).ravel(), np.asarray(y, float).ravel())
+    with rasterio.open(L4B_FILE) as s:
+        c = np.floor((X - s.transform.c) / s.transform.a).astype(int)
+        r = np.floor((Y - s.transform.f) / s.transform.e).astype(int)
+        a = s.read(1, window=rasterio.windows.Window(c.min(), r.min(), c.max() - c.min() + 1, r.max() - r.min() + 1)).astype(float)
+        nd = s.nodata
+    if nd is not None:
+        a[a == nd] = np.nan
+    a[a < 0] = np.nan
+    return a[r - r.min(), c - c.min()].reshape(shape)
+
+
+def l4b_v21_grid(transform, width, height, crs):
+    """L4B Version 2.1 at the cell centres of a grid."""
+    xx, yy = np.meshgrid(transform.c + (np.arange(width) + 0.5) * transform.a, transform.f + (np.arange(height) + 0.5) * transform.e)
+    return l4b_v21(xx, yy, crs)

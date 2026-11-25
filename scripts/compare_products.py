@@ -1,7 +1,7 @@
 """Compare our 2021 maps with GEDI L4B V2.1 (1 km) and ESA CCI Biomass V6 2021 (100 m), at 1 km and at the plots.
 
-1 km: products are fetched from Earth Engine on the exact 1 km grid of our map (out/maps/{aoi}/{aoi}_agb_1km.tif; CCI
-averaged from 100 m). Comparison in cells that lie inside the AOI and are >= 80% forest in our mask, where the
+1 km: L4B Version 2.1 (file of the ORNL DAAC, common.l4b_v21) and CCI Biomass (Earth Engine, averaged from 100 m) on the exact 1 km grid of our map
+(out/maps/{aoi}/{aoi}_agb_1km.tif). Comparison in cells that lie inside the AOI and are >= 80% forest in our mask, where the
 products' all-land means approximate a forest mean.
 Plots: L4B 1 km cell and CCI 100 m pixel at each plot centre, against field AGB.
 Output: out/study/products_1km.csv, products_plots.csv, fig_products.png
@@ -16,14 +16,13 @@ import rasterio
 from rasterio.io import MemoryFile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import MAPS, STUDY
+from common import MAPS, STUDY, l4b_v21, l4b_v21_grid
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 import ee
 ee.Initialize(project="YOUR-EE-PROJECT", opt_url="https://earthengine-highvolume.googleapis.com")
-L4B = ee.Image("LARSE/GEDI/GEDI04_B_002").select("MU")
 CCI = ee.ImageCollection("projects/sat-io/open-datasets/ESA/ESA_CCI_AGB") \
     .filter(ee.Filter.eq("system:index", "CCI_BIOMASS_100m_AGB_2021_V6")).first().select("AGB")
 
@@ -50,7 +49,7 @@ for aoi in ["NE", "SW"]:
         ours, ffrac, afrac = src.read()[:3].astype(float)
         crs, tr, w, h = src.crs.to_string(), src.transform, src.width, src.height
     crs_ee = crs if crs.startswith("EPSG") else "EPSG:" + str(src.crs.to_epsg())
-    l4b = fetch(L4B, crs_ee, tr, w, h)
+    l4b = l4b_v21_grid(tr, w, h, crs_ee)
     cci = fetch(CCI.reduceResolution(ee.Reducer.mean(), maxPixels=512).reproject(crs=crs_ee, scale=1000), crs_ee, tr, w, h, 150)
     sel = (afrac >= 0.999) & (ffrac >= 0.8) & np.isfinite(ours)
     pix[aoi] = (ours[sel], l4b[sel], cci[sel])
@@ -69,10 +68,12 @@ pd.DataFrame(rows).to_csv(STUDY / "products_1km.csv", index=False)
 # plots
 pl = pd.read_csv(STUDY / "field_plots.csv")[["plot", "region", "lon", "lat", "calibration", "agb_mgha"]]
 fc = ee.FeatureCollection([ee.Feature(ee.Geometry.Point([r.lon, r.lat]), {"plot": r.plot}) for r in pl.itertuples()])
-v1 = L4B.rename("l4b").reduceRegions(fc, ee.Reducer.first(), 1000).getInfo()["features"]
 v2 = CCI.rename("cci").reduceRegions(fc, ee.Reducer.first(), 100).getInfo()["features"]
-pv = pd.DataFrame([dict(plot=f["properties"]["plot"], l4b=f["properties"].get("first")) for f in v1]).merge(
-    pd.DataFrame([dict(plot=f["properties"]["plot"], cci=f["properties"].get("first")) for f in v2]), on="plot")
+pv = pd.DataFrame([dict(plot=f["properties"]["plot"], cci=f["properties"].get("first")) for f in v2])
+pl["l4b"] = np.nan
+for region in ("NE", "SW"):
+    s = pl.region == region
+    pl.loc[s, "l4b"] = l4b_v21(pl.lon[s], pl.lat[s], "EPSG:4326")
 pl = pl.merge(pv, on="plot")
 pl.to_csv(STUDY / "products_plots.csv", index=False)
 summ = []

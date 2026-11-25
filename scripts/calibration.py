@@ -1,7 +1,7 @@
 """RH -> AGB calibration from the footprint-targeted plots — model comparison, L4A-prior hybrid, and what each choice
 does to the regional mean AGB of GEDI V3 forest footprints.
 
-Calibration plots, RH metric per region (NE RH98, SW RH80; targeted V1 shot, RH identical in V3):
+Calibration plots, RH metric per region (NE RH98, SW RH80; targeted V1 shot; the RH of the same footprints in V3 is compared in plot_checks.py):
   M1 power law fitted by NLS on the AGB scale 
   M2 log-log OLS with Snowdon ratio back-transformation
   M3 Gamma GLM with log link (constant coefficient of variation)
@@ -42,7 +42,7 @@ POWER = ["BEAM0101", "BEAM0110", "BEAM1000", "BEAM1011"]
 FIELD_DATE = {"NE": pd.Timestamp("2021-10-31"), "SW": pd.Timestamp("2021-12-15")}   # NE Oct-Nov 2021, SW Dec 2021
 ALLOM = ["agb_luo2018_mgha", "agb_ne_alt1_mgha", "agb_ne_alt2_mgha", "agb_sw_alt_mgha", "agb_chave14_wd055_mgha"]
 N0 = [0, 3, 6, 12, 24, 48, np.inf]
-B = 2000
+B = 5000                                                                    # plot bootstraps (all intervals of this script)
 rng = np.random.default_rng(15)
 
 
@@ -220,13 +220,15 @@ for region in ["NE", "SW"]:
                          n0_chosen=" ".join(str(b) for _, b in nest)))
 
     # sample-size (plot bootstrap) and allometry uncertainty of the regional mean
+    ux, inv = np.unique(xr, return_inverse=True)
+    wx = np.bincount(inv) / len(xr)                                          # mean over the footprints = weighted mean over the RH values
     for name in ["M1 power law, NLS", "M3 Gamma GLM", "H n0=12"]:
         means = []
-        for _ in range(B // 4):
+        for _ in range(B):
             i = rng.integers(0, len(y), len(y))
             if np.ptp(x[i]) > 0:
                 try:
-                    means.append(models[name](x[i], y[i])(xr).mean())
+                    means.append(wx @ models[name](x[i], y[i])(ux))
                 except RuntimeError:
                     pass
         reg_rows.append(dict(region=region, model=name, regional_mean=curves[(region, name)](xr).mean(),
